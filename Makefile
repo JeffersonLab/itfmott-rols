@@ -18,7 +18,7 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= event_list.so ti_list.so
+VMEROL			= event_list.so ti_list.so uitf_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
 ROLLIBS			= -ldalmaRol
 
