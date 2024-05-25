@@ -165,6 +165,59 @@ uitf_config_parse()
       return -1;
     }
 
+  FIND_N_FILL(confti, ti_params, blocklevel);
+  FIND_N_FILL(confti, ti_params, bufferlevel);
+  FIND_N_FILL(confti, ti_params, prescale);
+
+  // check for trigger rules
+  config_setting_t *trig_rules = config_setting_get_member(confti, "trigger_rules");
+  if(trig_rules==NULL)
+    {
+      printf("%s: didn't find trigger_rules\n", __func__);
+      return -1;
+    }
+
+  int32_t itr = 0, ntr = 0;
+  ntr = config_setting_length(trig_rules);
+  if(ntr != 4)
+    {
+      printf("%s: not the right number of ntr (%d)\n", __func__, ntr);
+      return -1;
+    }
+  for(itr = 0; itr < ntr; itr++)
+    {
+      // get each trigger rule and extract period and timestep
+      const config_setting_t *tr = config_setting_get_elem(trig_rules, itr);
+
+      FIND_N_FILL(tr, ti_params.rule[itr], period);
+      FIND_N_FILL(tr, ti_params.rule[itr], timestep);
+    }
+
+
+
+  // check for random pulser
+  config_setting_t *rand_pulser = config_setting_get_member(confti, "random_pulser");
+  if(rand_pulser==NULL)
+    {
+      printf("%s: didn't find random_pulser\n", __func__);
+      return -1;
+    }
+  FIND_N_FILL(rand_pulser, ti_params.random, enabled);
+  FIND_N_FILL(rand_pulser, ti_params.random, prescale);
+
+  // check for fixed pulser
+  config_setting_t *fixed_pulser = config_setting_get_member(confti, "fixed_pulser");
+  if(fixed_pulser==NULL)
+    {
+      printf("%s: didn't find fixed_pulser\n", __func__);
+      return -1;
+    }
+  FIND_N_FILL(fixed_pulser, ti_params.fixed, enabled);
+  FIND_N_FILL(fixed_pulser, ti_params.fixed, nevents);
+  FIND_N_FILL(fixed_pulser, ti_params.fixed, period);
+  FIND_N_FILL(fixed_pulser, ti_params.fixed, timestep);
+
+
   //
   // Helcity Decoder
   //
