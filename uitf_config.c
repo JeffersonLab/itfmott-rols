@@ -228,8 +228,27 @@ uitf_config_parse()
 	   __func__);
       return -1;
     }
+  FIND_N_FILL(confhd, hd_params, enabled);
+  FIND_N_FILL(confhd, hd_params, address);
+  FIND_N_FILL(confhd, hd_params, slot);
 
+  FIND_N_FILL(confhd, hd_params, input_delay);
+  FIND_N_FILL(confhd, hd_params, trigger_latency_delay);
 
+  FIND_N_FILL(confhd, hd_params, use_internal_helicity);
+
+  // check for internal_helicity
+  config_setting_t *int_helicity = config_setting_get_member(confhd, "internal_helicity");
+  if(int_helicity==NULL)
+    {
+      printf("%s: didn't find internal_helicity\n", __func__);
+      return -1;
+    }
+  FIND_N_FILL(int_helicity, hd_params.internal, helicity_pattern);
+  FIND_N_FILL(int_helicity, hd_params.internal, window_delay);
+  FIND_N_FILL(int_helicity, hd_params.internal, settle_time);
+  FIND_N_FILL(int_helicity, hd_params.internal, stable_time);
+  FIND_N_FILL(int_helicity, hd_params.internal, seed);
 
   //
   // fadc250
@@ -318,8 +337,7 @@ uitf_config_parse()
       for(itet = 0; itet < ntet; itet ++)
 	fadc_params[itype].threshold[itet] = config_setting_get_int_elem(threshold, itet);
 
-}
-
+    }
 
   return 0;
 }
