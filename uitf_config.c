@@ -6,96 +6,20 @@
  *
  *
  */
-
-#include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <libconfig.h>
 
+#include "uitf_config.h"
+#include "jvme.h"
+#include "tiLib.h"
+#include "hdLib.h"
+#include "fadcLib.h"
+
 config_t uitfCfg;
 
-typedef struct
-{
-  uint32_t period;
-  uint32_t timestep;
-} trigger_rule_t;
-
-typedef struct
-{
-  uint32_t enabled;
-  uint32_t prescale;
-} random_pulser_t;
-
-typedef struct
-{
-  uint32_t enabled;
-  uint32_t nevents;
-  uint32_t period;
-  uint32_t timestep;
-} fixed_pulser_t;
-
-typedef struct
-{
-  uint32_t blocklevel;
-  uint32_t bufferlevel;
-  uint32_t prescale;
-  trigger_rule_t rule[4];
-  random_pulser_t random;
-  fixed_pulser_t fixed;
-} ti_config_t;
-
-
-typedef struct
-{
-  uint32_t helicity_pattern;
-  uint32_t window_delay;
-  uint32_t settle_time;
-  uint32_t stable_time;
-  uint32_t seed;
-} internal_helicity_t;
-
-typedef struct
-{
-  uint32_t enabled;
-  uint32_t address;
-  uint32_t slot;
-  uint32_t input_delay;
-  uint32_t trigger_latency_delay;
-  uint32_t use_internal_helicity;
-  internal_helicity_t internal;
-} hd_config_t;
-
-typedef struct
-{
-  uint32_t type;
-  uint32_t address;
-  uint32_t slot;
-
-  uint32_t sd_fp_address;
-  uint32_t init_arg;
-
-  uint32_t mode;
-  uint32_t pl;
-  uint32_t ptw;
-  uint32_t nsb;
-  uint32_t nsa;
-  uint32_t np;
-
-  uint32_t delay8;
-  uint32_t delay9;
-  uint32_t delay11;
-
-  uint32_t threshold[16];
-  uint32_t dac[16];
-
-} fadc_config_t;
-
-enum
-  {
-    UITF_COUNTING = 0,
-    UITF_INTEGRATING = 1
-  };
 
 ti_config_t ti_params;
 hd_config_t hd_params;
@@ -169,7 +93,7 @@ uitf_config_parse()
   FIND_N_FILL(confti, ti_params, bufferlevel);
   FIND_N_FILL(confti, ti_params, prescale);
 
-  // check for trigger rules
+  // ti: check for trigger rules
   config_setting_t *trig_rules = config_setting_get_member(confti, "trigger_rules");
   if(trig_rules==NULL)
     {
@@ -195,7 +119,7 @@ uitf_config_parse()
 
 
 
-  // check for random pulser
+  // ti: check for random pulser
   config_setting_t *rand_pulser = config_setting_get_member(confti, "random_pulser");
   if(rand_pulser==NULL)
     {
@@ -205,7 +129,7 @@ uitf_config_parse()
   FIND_N_FILL(rand_pulser, ti_params.random, enabled);
   FIND_N_FILL(rand_pulser, ti_params.random, prescale);
 
-  // check for fixed pulser
+  // ti: check for fixed pulser
   config_setting_t *fixed_pulser = config_setting_get_member(confti, "fixed_pulser");
   if(fixed_pulser==NULL)
     {
@@ -237,7 +161,7 @@ uitf_config_parse()
 
   FIND_N_FILL(confhd, hd_params, use_internal_helicity);
 
-  // check for internal_helicity
+  // hd: check for internal_helicity
   config_setting_t *int_helicity = config_setting_get_member(confhd, "internal_helicity");
   if(int_helicity==NULL)
     {
@@ -300,6 +224,7 @@ uitf_config_parse()
       FIND_N_FILL(fa, fadc_params[itype], delay11);
       FIND_N_FILL(fa, fadc_params[itype], dac[0]);
 
+      // fadc250: check for dac
       config_setting_t *dac = config_setting_get_member(fa, "dac");
       if(dac==NULL)
 	{
@@ -318,6 +243,7 @@ uitf_config_parse()
       for(idac = 0; idac < ndac; idac ++)
 	fadc_params[itype].dac[idac] = config_setting_get_int_elem(dac, idac);
 
+      // fadc250: check for threshold
       config_setting_t *threshold = config_setting_get_member(fa, "threshold");
       if(threshold==NULL)
 	{
@@ -342,8 +268,113 @@ uitf_config_parse()
   return 0;
 }
 
-/*
-  Local Variables:
-  compile-command: "cd test; make "
-  End:
-*/
+// use the config file parameters to init libraries and configure modules
+int32_t
+uitf_config_modules_init()
+{
+  int32_t stat = OK;
+
+  /* Load the trigger table that associates
+   *  pins 21/22 | 23/24 | 25/26 : trigger1
+   *  pins 29/30 | 31/32 | 33/34 : trigger2
+   */
+  tiLoadTriggerTable(0);
+
+  /* Set prompt output width (10 + 2) * 4 = 48 ns */
+  tiSetPromptTriggerWidth(10);
+
+  int32_t irule = 0, nrule = 4;
+  for(irule = 0; irule < nrule; irule++)
+    tiSetTriggerHoldoff(irule, ti_params.rule[irule].period,
+			ti_params.rule[irule].timestep);
+
+  /* Set initial number of events per block */
+  tiSetBlockLevel(ti_params.blocklevel);
+
+  /* Set Trigger Buffer Level */
+  tiSetBlockBufferLevel(ti_params.bufferlevel);
+
+
+  extern u_long fadcA32Base;
+  extern uint32_t fadcAddrList[FA_MAX_BOARDS];
+
+  int32_t iflag = fadc_params[UITF_COUNTING].sd_fp_address;
+  iflag |= fadc_params[UITF_COUNTING].init_arg;
+  iflag |= FA_INIT_USE_ADDRLIST;
+
+
+  fadcAddrList[UITF_COUNTING] = fadc_params[UITF_COUNTING].address;
+  fadcAddrList[UITF_INTEGRATING] = fadc_params[UITF_INTEGRATING].address;
+
+  vmeSetQuietFlag(1);
+  fadcA32Base = 0x08800000;
+  stat = faInit(0, 0, 2, iflag);
+  vmeSetQuietFlag(0);
+
+  faSDC_Init_Integrating(fadc_params[UITF_INTEGRATING].sd_fp_address);
+
+  extern int32_t nfadc;
+  int ifa;
+  /* Program/Init VME Modules Here */
+  for(ifa = 0; ifa < nfadc; ifa++)
+    {
+      /* Set clock source to FP (from faSDC) */
+      faSetClockSource(fadc_params[ifa].slot, FA_REF_CLK_FP);
+
+      faSoftReset(fadc_params[ifa].slot, 0);
+      faResetTriggerCount(fadc_params[ifa].slot);
+
+      faEnableBusError(fadc_params[ifa].slot);
+
+      /* Set input DAC level */
+      int32_t ich = 0; int32_t nchan = 16;
+      for(ich = 0; ich < nchan; ich++)
+	{
+	  faSetDAC(fadc_params[ifa].slot, fadc_params[ifa].dac[ich], (1 << ich));
+	  faSetThreshold(fadc_params[ifa].slot, fadc_params[ifa].dac[ich], (1 << ich));
+	}
+
+      faSetProcMode(fadc_params[ifa].slot,
+		    fadc_params[ifa].mode,
+		    fadc_params[ifa].pl,
+		    fadc_params[ifa].ptw,
+		    fadc_params[ifa].nsb,
+		    fadc_params[ifa].nsa,
+		    fadc_params[ifa].np,
+		    0);
+
+      /* Enable hitbits for scalers and CTP */
+      faSetHitbitsMode(fadc_params[ifa].slot, 1);
+    }
+
+  if(hd_params.enabled)
+    {
+      stat = hdInit(hd_params.address, HD_INIT_FP, HD_INIT_EXTERNAL_FIBER, 0);
+
+      hdSetProcDelay(hd_params.input_delay, hd_params.trigger_latency_delay);
+
+      /* Enable the module decoder, well before triggers are enabled */
+      hdEnableDecoder();
+
+      if(hd_params.use_internal_helicity)
+	{
+	  hdSetHelicitySource(1, 0, 1);
+	  hdHelicityGeneratorConfig(hd_params.internal.helicity_pattern,
+				    hd_params.internal.window_delay,
+				    hd_params.internal.settle_time,
+				    hd_params.internal.stable_time,
+				    hd_params.internal.seed);
+	  hdEnableHelicityGenerator();
+	}
+    }
+
+  return OK;
+}
+
+int32_t
+uitf_config_modules_prestart()
+{
+  // Just enable syncreset sources
+
+  return OK;
+}

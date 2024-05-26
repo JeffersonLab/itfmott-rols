@@ -30,21 +30,23 @@
 #include "tiprimary_list.c"
 #include "dmaBankTools.h"
 
-/* Define initial blocklevel and buffering level */
-#define BLOCKLEVEL 1
-#define BUFFERLEVEL 1
-
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
 
 /* Event type 137 code */
 #include "rocUtils.c"
 
+/* uitf config library */
+#include "uitf_config.h"
+
 /* fadc library*/
 #include "fadcLib.h"
-extern int32_t nfadc;
-extern uint32_t fadcA32Base;
 int32_t MAXFADCWORDS = 0;
+const uint32_t FADC250_DECODER_BANK = 0x5;
+
+/* helicity decoder library */
+#include "hdLib.h"
+const uint32_t HELICITY_DECODER_BANK = 0x11;
 
 /*
   Global to configure the trigger source
@@ -65,23 +67,11 @@ rocDownload()
 {
   int stat;
 
-  /* Setup Address and data modes for DMA transfers
-   *
-   *  vmeDmaConfig(addrType, dataType, sstMode);
-   *
-   *  addrType = 0 (A16)    1 (A24)    2 (A32)
-   *  dataType = 0 (D16)    1 (D32)    2 (BLK32) 3 (MBLK) 4 (2eVME) 5 (2eSST)
-   *  sstMode  = 0 (SST160) 1 (SST267) 2 (SST320)
-   */
-  vmeDmaConfig(2,5,1);
-
-  /* Define BLock Level */
-  blockLevel = BLOCKLEVEL;
-
-
   /*****************
    *   TI SETUP
    *****************/
+  // FIXME: This is config dependent (int vs count)
+
   /*
    * Set Trigger source
    *    For the TI-Master, valid sources:
@@ -102,40 +92,6 @@ rocDownload()
   /* Enable set specific TS input bits (1-6) */
   tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
 
-  /* Load the trigger table that associates
-   *  pins 21/22 | 23/24 | 25/26 : trigger1
-   *  pins 29/30 | 31/32 | 33/34 : trigger2
-   */
-  tiLoadTriggerTable(0);
-
-  tiSetTriggerHoldoff(1,10,0);
-  tiSetTriggerHoldoff(2,10,0);
-
-  /* Set initial number of events per block */
-  tiSetBlockLevel(blockLevel);
-
-  /* Set Trigger Buffer Level */
-  tiSetBlockBufferLevel(BUFFERLEVEL);
-
-  tiSetTriggerPulse(1,0,25,0);
-
-  /* Set prompt output width (127 + 2) * 4 = 516 ns */
-  tiSetPromptTriggerWidth(127);
-
-  /* Init all FADC Modules Here */
-  int32_t iflag = 0xea00; /* SDC Board address */
-  iflag |= FA_INIT_EXT_SYNCRESET;  /* Front panel sync-reset */
-  iflag |= FA_INIT_FP_TRIG;  /* Front Panel Input trigger source */
-  iflag |= FA_INIT_FP_CLKSRC;  /* Internal 250MHz Clock source */
-
-  uint32_t FADC_ADDR = 0xed0000, FADC_INCR = 0x10000, NFADC=2;
-
-  fadcA32Base = 0x09000000;
-
-  vmeSetQuietFlag(1);
-  faInit(FADC_ADDR, FADC_INCR, NFADC, iflag);
-  vmeSetQuietFlag(0);
-
   faSDC_Status(0);
   faGStatus(0);
 
@@ -153,61 +109,6 @@ rocPrestart()
 {
 
   /* Program modules */
-  int ifa;
-
-  int32_t FADC_MODE = 0, FADC_WINDOW_LAT = 0, FADC_WINDOW_WIDTH = 0;
-
-  /* Program/Init VME Modules Here */
-  for(ifa = 0; ifa < nfadc; ifa++)
-    {
-      /* Set clock source to FP (from faSDC) */
-      faSetClockSource(faSlot(ifa), FA_REF_CLK_FP);
-
-      faSoftReset(faSlot(ifa),0);
-      faResetTriggerCount(faSlot(ifa));
-
-      faEnableBusError(faSlot(ifa));
-
-      /* Set input DAC level */
-      faSetDAC(faSlot(ifa), 3250, 0);
-
-      /*  Set All channel thresholds to 150 */
-      faSetThreshold(faSlot(ifa), 150, 0xffff);
-
-      /*********************************************************************************
-       * faSetProcMode(int id, int pmode, unsigned int PL, unsigned int PTW,
-       *    int NSB, unsigned int NSA, unsigned int NP,
-       *    unsigned int NPED, unsigned int MAXPED, unsigned int NSAT);
-       *
-       *  id    : fADC250 Slot number
-       *  pmode : Processing Mode
-       *          9 - Pulse Parameter (ped, sum, time)
-       *         10 - Debug Mode (9 + Raw Samples)
-       *    PL : Window Latency
-       *   PTW : Window Width
-       *   NSB : Number of samples before pulse over threshold
-       *   NSA : Number of samples after pulse over threshold
-       *    NP : Number of pulses processed per window
-       *  NPED : Number of samples to sum for pedestal
-       *MAXPED : Maximum value of sample to be included in pedestal sum
-       *  NSAT : Number of consecutive samples over threshold for valid pulse
-       */
-      faSetProcMode(faSlot(ifa),
-		    FADC_MODE,   /* Processing Mode */
-		    FADC_WINDOW_LAT, /* PL */
-		    FADC_WINDOW_WIDTH,  /* PTW */
-		    3,   /* NSB */
-		    6,   /* NSA */
-		    1,   /* NP */
-		    4,   /* NPED */
-		    250, /* MAXPED */
-		    2);  /* NSAT */
-
-      /* Enable hitbits for scalers and CTP */
-      faSetHitbitsMode(faSlot(ifa), 1);
-
-    }
-
   /* Enable syncreset source */
   faGEnableSyncSrc();
 
@@ -218,6 +119,7 @@ rocPrestart()
   DALMAGO;
   faGStatus(0);
   faSDC_Status(0);
+  faSDC_Status_Integrating(0);
   tiStatus(0);
   DALMASTOP;
 
@@ -282,7 +184,7 @@ rocGo()
       if(rocTriggerSource == 1)
 	{
 	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-	  	  tiSetRandomTrigger(1,0xd);
+	  tiSetRandomTrigger(1,0xd);
 	  //tiSetRandomTrigger(1,0x4);
 	}
 
@@ -340,10 +242,20 @@ rocEnd()
 void
 rocTrigger(int arg)
 {
+  extern int32_t nfadc;
   int ev_num = 0, dCnt = 0;
+  int timeout=0, maxtime = 100;
 
   ev_num = tiGetIntCount();
 
+  /* Setup Address and data modes for DMA transfers
+   *
+   *  vmeDmaConfig(addrType, dataType, sstMode);
+   *
+   *  addrType = 0 (A16)    1 (A24)    2 (A32)
+   *  dataType = 0 (D16)    1 (D32)    2 (BLK32) 3 (MBLK) 4 (2eVME) 5 (2eSST)
+   *  sstMode  = 0 (SST160) 1 (SST267) 2 (SST320)
+   */
   vmeDmaConfig(2,5,1);
 
   /* Readout the trigger block from the TI
@@ -360,14 +272,46 @@ rocTrigger(int arg)
       dma_dabufp += dCnt;
     }
 
+  /* Helicity Decoder readout */
+  BANKOPEN(HELICITY_DECODER_BANK, BT_UI4, blockLevel);
+  while((hdBReady()!=1) && (timeout<maxtime))
+    {
+      timeout++;
+    }
+
+  if(timeout>=maxtime)
+    {
+      printf("%s: ERROR: TIMEOUT waiting for Helicity Decoder Block Ready\n",
+	     __func__);
+    }
+  else
+    {
+      dCnt = hdReadBlock(dma_dabufp, 1024>>2,1);
+      if(dCnt<=0)
+	{
+	  printf("%s: ERROR or NO data from hdReadBlock(...) = %d\n",
+		 __func__, dCnt);
+	}
+      else
+	{
+	  dma_dabufp += dCnt;
+	}
+    }
+
+  BANKCLOSE;
+
+
+
   /* fADC250 Readout */
-  BANKOPEN(3,BT_UI4,0);
+  BANKOPEN(FADC250_DECODER_BANK,BT_UI4,blockLevel);
 
   /* Mask of initialized modules */
   uint32_t scanmask = faScanMask();
   /* Check scanmask for block ready up to 100 times */
-  uint32_t datascan = faGBlockReady(scanmask, 100);
+  uint32_t datascan = faGBlockReady(scanmask, maxtime);
   int32_t stat = (datascan == scanmask);
+
+  // FIXME: This just needs to readout the fadc that is enabled for this config
 
   if(stat)
     {
@@ -413,6 +357,18 @@ rocTrigger(int arg)
 	  while(tiBReady())
 	    {
 	      vmeDmaFlush(tiGetAdr32());
+	    }
+	}
+
+      davail = hdBReady();
+      if(davail > 0)
+	{
+	  printf("%s: ERROR: Helicity Decoder Data available (%d) after readout in SYNC event \n",
+		 __func__, davail);
+
+	  while(hdBReady(0))
+	    {
+	      vmeDmaFlush(hdGetA32());
 	    }
 	}
 

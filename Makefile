@@ -47,12 +47,12 @@ CFLAGS			+= -DLINUX -DDAYTIME=\""`date`"\"
 INCS			= -I. -I${LINUXVME_INC} ${INC_CODA_VME} \
 				-isystem${CODA}/common/include
 CFLAGS			+= -L. -L${LINUXVME_LIB} ${LIB_CODA_VME} -DJLAB \
-				-lrt -lpthread -ljvme -lti $(ROLLIBS)
+				-lm -lrt -lpthread -ljvme -lti $(ROLLIBS)
 
 # DEFs for compiling CODA readout lists
 CCRL			= ${CODA_BIN}/ccrl
 CODA_INCS		= -I. -I${LINUXVME_INC} ${INC_CODA_VME} -isystem${CODA}/common/include
-CODA_LIBDIRS            = -L.
+CODA_LIBDIRS            = -L. -lm
 CODA_LIBS		=
 CODA_DEFS		= -DLINUX -DDAYTIME=\""`date`"\"
 ifdef DEBUG
@@ -70,6 +70,7 @@ DEPDIR := .deps
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEPDIR)/$*.d
 DEPFILES := $(VMEROL:%.so=$(DEPDIR)/%.d)
 DEPFILES += $(CFILES:%.c=$(DEPDIR)/%.d)
+DEPFILES += $(DEPDIR)/uitf_config.d
 
 COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) $(INCS) $(CPPFLAGS) $(TARGET_ARCH)
 
@@ -79,14 +80,29 @@ all:  $(VMEROL) $(SOBJS)
 	@echo " CCRL   $@"
 	${Q}${CCRL} $<
 
-%.so: %.c
-%.so: %.c $(DEPDIR)/%.d | $(DEPDIR)
+%_list.o: %_list.c
+%_list.o: %_list.c $(DEPDIR)/%_list.d | $(DEPDIR)
 	@echo " CC     $@"
-	${Q}$(COMPILE.c) -fPIC -shared  \
-		-DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+	${Q}$(COMPILE.c) \
+		-DTI_MASTER -DINIT_NAME=$(@:.o=__init) -DINIT_NAME_POLL=$(@:.o=__poll) \
+		-fPIC -c -o $@ $<
+
+%.o: %.c
+%.o: %.c $(DEPDIR)/%.d | $(DEPDIR)
+	@echo " CC     $@"
+	${Q}$(COMPILE.c) -fPIC -c -o $@ $<
+
+uitf_list.so:  uitf_config.o uitf_list.o
+	@echo " CC     $@"
+	${Q}$(COMPILE.c)  -shared -o $@ $<
+
+
+%.so: %.o
+	@echo " CC     $@"
+	${Q}$(COMPILE.c) -fPIC -shared -o $@ $<
 
 clean distclean:
-	${Q}rm -f  $(VMEROL) $(SOBJS) $(CFILES) *~ $(DEPS) $(DEPS) *.d.*
+	${Q}rm -f  $(VMEROL) $(SOBJS) $(CFILES) *~ $(DEPFILES)
 
 $(DEPDIR): ; @mkdir -p $@
 
