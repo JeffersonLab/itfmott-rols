@@ -27,8 +27,8 @@
 #define FIBER_LATENCY_OFFSET 0x10
 
  /* Source required for CODA readout lists using the TI */
-#include "tiprimary_list.c"
 #include "dmaBankTools.h"
+#include "tiprimary_list.c"
 
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
@@ -37,11 +37,7 @@
 #include "rocUtils.c"
 
 /* uitf config library */
-#include "uitf_config.h"
-extern ti_config_t ti_params;
-extern hd_config_t hd_params;
-extern fadc_config_t fadc_params[2];
-
+#include "uitf_config.c"
 
 /* fadc library*/
 #include "fadcLib.h"
@@ -86,6 +82,7 @@ rocDownload()
       return;
     }
 
+  blockLevel = ti_params.blocklevel;
   /*
    * Set Trigger source
    *    For the TI-Master, valid sources:
@@ -95,13 +92,13 @@ rocDownload()
    */
   if(UITF_RUN_TYPE == UITF_COUNTING)
     {
-      /* Front Panel TRG */
-      tiSetTriggerSource(TI_TRIGGER_FPTRG);
+       /* Front Panel TS Inputs */
+      tiSetTriggerSource(TI_TRIGGER_TSINPUTS);
     }
   else if(UITF_RUN_TYPE == UITF_INTEGRATING)
     {
-       /* Front Panel TS Inputs */
-      tiSetTriggerSource(TI_TRIGGER_TSINPUTS);
+      /* Front Panel TRG */
+      tiSetTriggerSource(TI_TRIGGER_FPTRG);
     }
 
   tiStatus(0);
@@ -123,8 +120,6 @@ rocPrestart()
 {
 
   /* Program modules */
-  /* Enable syncreset source */
-  faGEnableSyncSrc();
 
   DALMAGO;
   tiStatus(0);
@@ -150,9 +145,6 @@ rocPrestart()
       UECLOSE;
     }
 
-  /* Sync Reset to init fadc250 timestamp and internal buffers */
-  faSDC_Sync();
-  faSDC_Sync_Integrating();
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -180,6 +172,14 @@ rocGo()
 
   if(UITF_RUN_TYPE == UITF_COUNTING)
     {
+      /* Enable syncreset source */
+      faGEnableSyncSrc();
+
+      /* Sync Reset to init fadc250 timestamp and internal buffers */
+      faSDC_Sync();
+      taskDelay(1);
+
+
       if(hd_params.enabled)
 	  hdEnable();
 
@@ -192,6 +192,7 @@ rocGo()
 
       tiIntEnable(1);
 
+      taskDelay(1);
       faEnable(fadc_params[UITF_INTEGRATING].slot, 0, 0);
     }
 
@@ -203,7 +204,7 @@ rocGo()
 void
 rocEnd()
 {
-  faDisable(fadc_params[UITF_RUN_TYPE].slot, 0);
+  faGDisable(0);
 
   if(hd_params.enabled)
     hdDisable();
@@ -256,6 +257,7 @@ rocTrigger(int arg)
     { /* TI Data is already in a bank structure.  Bump the pointer */
       dma_dabufp += dCnt;
     }
+
 
   /* Helicity Decoder readout */
   if(hd_params.enabled)

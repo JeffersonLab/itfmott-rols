@@ -60,7 +60,7 @@ CODA_CFLAGS		= -Wall -Wno-unused -g
 else
 CODA_CFLAGS		= -O
 endif
-CODA_CFLAGS		+= -w -fpic -shared ${CODA_INCS} ${CODA_LIBDIRS} \
+CODA_CFLAGS		+= ${CODA_INCS} ${CODA_LIBDIRS} \
 			  ${CODA_LIBS} ${CODA_DEFS}
 CRLFILES		= $(wildcard *.crl)
 CFILES			= $(CRLFILES:.crl=.c)
@@ -80,26 +80,12 @@ all:  $(VMEROL) $(SOBJS)
 	@echo " CCRL   $@"
 	${Q}${CCRL} $<
 
-%_list.o: %_list.c
-%_list.o: %_list.c $(DEPDIR)/%_list.d | $(DEPDIR)
+%.so: %.c
+%.so: %.c $(DEPDIR)/%.d | $(DEPDIR)
 	@echo " CC     $@"
 	${Q}$(COMPILE.c) \
-		-DTI_MASTER -DINIT_NAME=$(@:.o=__init) -DINIT_NAME_POLL=$(@:.o=__poll) \
-		-fPIC -c -o $@ $<
-
-%.o: %.c
-%.o: %.c $(DEPDIR)/%.d | $(DEPDIR)
-	@echo " CC     $@"
-	${Q}$(COMPILE.c) -fPIC -c -o $@ $<
-
-uitf_list.so:  uitf_config.o uitf_list.o
-	@echo " CC     $@"
-	${Q}$(COMPILE.c)  -shared -o $@ $<
-
-
-%.so: %.o
-	@echo " CC     $@"
-	${Q}$(COMPILE.c) -fPIC -shared -o $@ $<
+		-DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) \
+		-fpic -shared -o $@ $<
 
 clean distclean:
 	${Q}rm -f  $(VMEROL) $(SOBJS) $(CFILES) *~ $(DEPFILES)

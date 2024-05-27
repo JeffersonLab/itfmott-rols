@@ -54,7 +54,7 @@ uitf_config_init(char *filename)
 
   memset(&ti_params, 0, sizeof(ti_params));
   memset(&hd_params, 0, sizeof(hd_params));
-  memset(&fadc_params, 0, 2*sizeof(fadc_params));
+  memset(&fadc_params, 0, sizeof(fadc_params));
 
   return uitf_config_parse();
 }
@@ -280,7 +280,7 @@ uitf_config_modules_init()
   tiLoadTriggerTable(3);
 
   /* Set prompt output width (10 + 2) * 4 = 48 ns */
-  tiSetPromptTriggerWidth(10);
+  tiSetPromptTriggerWidth(0x7f);
 
   int32_t irule = 0, nrule = 4;
   for(irule = 0; irule < nrule; irule++)
@@ -325,6 +325,8 @@ uitf_config_modules_init()
       faResetTriggerCount(fadc_params[ifa].slot);
 
       faEnableBusError(fadc_params[ifa].slot);
+
+      faEnableTriggerOut(fadc_params[ifa].slot, 0);
 
       faSetBlockLevel(fadc_params[ifa].slot, ti_params.blocklevel);
 
