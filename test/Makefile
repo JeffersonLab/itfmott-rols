@@ -35,7 +35,7 @@ AR                      = ar
 RANLIB                  = ranlib
 INCS			= -I. -I${LINUXVME_INC} ${CODA_VME_INC}
 CFLAGS			= -L. -L${LINUXVME_LIB} ${CODA_LIB}
-CFLAGS			+= -lstdc++ -lrt -ljvme -lsd -lti -lts -ltd -lfadc -lconfig
+CFLAGS			+= -lstdc++ -lrt -ljvme -lsd -lti -lts -ltd -lfadc -lhd -lconfig
 
 ifeq ($(DEBUG),1)
 	CFLAGS		+= -Wall -g -Wno-unused

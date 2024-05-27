@@ -56,7 +56,7 @@ uitf_config_init(char *filename)
   memset(&hd_params, 0, sizeof(hd_params));
   memset(&fadc_params, 0, 2*sizeof(fadc_params));
 
-  return 0;
+  return uitf_config_parse();
 }
 
 #define FIND_N_FILL(x_config_setting, x_params, x_param_name) {		\
@@ -274,18 +274,17 @@ uitf_config_modules_init()
 {
   int32_t stat = OK;
 
-  /* Load the trigger table that associates
-   *  pins 21/22 | 23/24 | 25/26 : trigger1
-   *  pins 29/30 | 31/32 | 33/34 : trigger2
-   */
-  tiLoadTriggerTable(0);
+  tiEnableTSInput( TI_TSINPUT_ALL );
+
+  /* Load the trigger table (3) that associates all TS with physics trigger */
+  tiLoadTriggerTable(3);
 
   /* Set prompt output width (10 + 2) * 4 = 48 ns */
   tiSetPromptTriggerWidth(10);
 
   int32_t irule = 0, nrule = 4;
   for(irule = 0; irule < nrule; irule++)
-    tiSetTriggerHoldoff(irule, ti_params.rule[irule].period,
+    tiSetTriggerHoldoff(irule+1, ti_params.rule[irule].period,
 			ti_params.rule[irule].timestep);
 
   /* Set initial number of events per block */
@@ -308,7 +307,8 @@ uitf_config_modules_init()
 
   vmeSetQuietFlag(1);
   fadcA32Base = 0x08800000;
-  stat = faInit(0, 0, 2, iflag);
+  stat = faInit(fadcAddrList[0], 0, 2, iflag);
+  faDisableMultiBlock();
   vmeSetQuietFlag(0);
 
   faSDC_Init_Integrating(fadc_params[UITF_INTEGRATING].sd_fp_address);
@@ -325,6 +325,8 @@ uitf_config_modules_init()
       faResetTriggerCount(fadc_params[ifa].slot);
 
       faEnableBusError(fadc_params[ifa].slot);
+
+      faSetBlockLevel(fadc_params[ifa].slot, ti_params.blocklevel);
 
       /* Set input DAC level */
       int32_t ich = 0; int32_t nchan = 16;
@@ -343,15 +345,25 @@ uitf_config_modules_init()
 		    fadc_params[ifa].np,
 		    0);
 
-      /* Enable hitbits for scalers and CTP */
+      if(fadc_params[ifa].type == UITF_INTEGRATING)
+	{
+	  faSetMottDelay(fadc_params[ifa].slot, 8, fadc_params[ifa].delay8);
+	  faSetMottDelay(fadc_params[ifa].slot, 9, fadc_params[ifa].delay9);
+	  faSetMottDelay(fadc_params[ifa].slot, 11, fadc_params[ifa].delay11);
+	}
+
+	/* Enable hitbits for scalers and CTP */
       faSetHitbitsMode(fadc_params[ifa].slot, 1);
     }
 
   if(hd_params.enabled)
     {
+      hdSetA32(0x09800000);
       stat = hdInit(hd_params.address, HD_INIT_FP, HD_INIT_EXTERNAL_FIBER, 0);
 
       hdSetProcDelay(hd_params.input_delay, hd_params.trigger_latency_delay);
+
+      hdSetBlocklevel(ti_params.blocklevel);
 
       /* Enable the module decoder, well before triggers are enabled */
       hdEnableDecoder();

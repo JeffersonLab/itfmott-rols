@@ -38,6 +38,10 @@
 
 /* uitf config library */
 #include "uitf_config.h"
+extern ti_config_t ti_params;
+extern hd_config_t hd_params;
+extern fadc_config_t fadc_params[2];
+
 
 /* fadc library*/
 #include "fadcLib.h"
@@ -48,16 +52,8 @@ const uint32_t FADC250_DECODER_BANK = 0x5;
 #include "hdLib.h"
 const uint32_t HELICITY_DECODER_BANK = 0x11;
 
-/*
-  Global to configure the trigger source
-      0 : tsinputs
-      1 : TI random pulser
-      2 : TI fixed pulser
-
-  Set with rocSetTriggerSource(int source);
-*/
-int rocTriggerSource = 1;
-void rocSetTriggerSource(int source); // routine prototype
+// runtype set by user string at Download.  default to counting
+int32_t UITF_RUN_TYPE = UITF_COUNTING;
 
 /****************************************
  *  DOWNLOAD
@@ -67,35 +63,53 @@ rocDownload()
 {
   int stat;
 
-  /*****************
-   *   TI SETUP
-   *****************/
-  // FIXME: This is config dependent (int vs count)
+  if(strlen(rol->usrString) > 0)
+    {
+      if(strcasecmp(rol->usrString, "integrating") == 0)
+	UITF_RUN_TYPE = UITF_INTEGRATING;
+      else if(strcasecmp(rol->usrString, "counting") == 0)
+	UITF_RUN_TYPE = UITF_COUNTING;
+      else
+	printf("%s: ERROR: Invalid runtype (%s).  Default to counting\n",
+	       __func__, rol->usrString);
+    }
+
+  if(uitf_config_init(rol->usrConfig) != 0)
+    {
+      daLogMsg("ERROR","Error Loading Configfile: %s", rol->usrConfig);
+      return;
+    }
+
+  if(uitf_config_modules_init() != 0)
+    {
+      daLogMsg("ERROR", "Module init error");
+      return;
+    }
 
   /*
    * Set Trigger source
    *    For the TI-Master, valid sources:
    *      TI_TRIGGER_FPTRG     2  Front Panel "TRG" Input
    *      TI_TRIGGER_TSINPUTS  3  Front Panel "TS" Inputs
-   *      TI_TRIGGER_TSREV2    4  Ribbon cable from Legacy TS module
    *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
    */
-  if(rocTriggerSource == 0)
+  if(UITF_RUN_TYPE == UITF_COUNTING)
     {
-      tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+      /* Front Panel TRG */
+      tiSetTriggerSource(TI_TRIGGER_FPTRG);
     }
-  else
+  else if(UITF_RUN_TYPE == UITF_INTEGRATING)
     {
-      tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+       /* Front Panel TS Inputs */
+      tiSetTriggerSource(TI_TRIGGER_TSINPUTS);
     }
-
-  /* Enable set specific TS input bits (1-6) */
-  tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
-
-  faSDC_Status(0);
-  faGStatus(0);
 
   tiStatus(0);
+  faSDC_Status(0);
+  faSDC_Status_Integrating(0);
+  faGStatus(0);
+  if(hd_params.enabled)
+    hdStatus(0);
 
   printf("rocDownload: User Download Executed\n");
 
@@ -112,15 +126,13 @@ rocPrestart()
   /* Enable syncreset source */
   faGEnableSyncSrc();
 
-  /* Sync Reset to synchronize TI and fadc250 timestamps and their internal buffers */
-  faSDC_Sync();
-
-
   DALMAGO;
-  faGStatus(0);
+  tiStatus(0);
   faSDC_Status(0);
   faSDC_Status_Integrating(0);
-  tiStatus(0);
+  faGStatus(0);
+  if(hd_params.enabled)
+    hdStatus(0);
   DALMASTOP;
 
   if(rol->usrConfig)
@@ -138,6 +150,9 @@ rocPrestart()
       UECLOSE;
     }
 
+  /* Sync Reset to init fadc250 timestamp and internal buffers */
+  faSDC_Sync();
+  faSDC_Sync_Integrating();
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -154,54 +169,32 @@ rocGo()
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
 
-  int bufferLevel = 0;
-  /* Get the current buffering settings (blockLevel, bufferLevel) */
-  blockLevel = tiGetCurrentBlockLevel();
-  bufferLevel = tiGetBroadcastBlockBufferLevel();
-  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
-	 __func__,
-	 blockLevel,
-	 tiGetBlockBufferLevel(),
-	 bufferLevel);
-
-
-
-
-  faGSetBlockLevel(blockLevel);
-
-  /*  Enable FADC */
-  faGEnable(0, 0);
-
-
-
-
-  if(rocTriggerSource != 0)
-    {
-      printf("************************************************************\n");
-      daLogMsg("INFO","TI Configured for Internal Pulser Triggers");
-      printf("************************************************************\n");
-
-      if(rocTriggerSource == 1)
-	{
-	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-	  tiSetRandomTrigger(1,0xd);
-	  //tiSetRandomTrigger(1,0x4);
-	}
-
-      if(rocTriggerSource == 2)
-	{
-	  /*    Enable fixed rate with period (ns)
-		120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
-		- arg2 = 0xffff - Continuous
-		- arg2 < 0xffff = arg2 times
-	  */
-	  tiSoftTrig(1,0xffff,100,0);
-	}
-    }
-
   DALMAGO;
   tiStatus(0);
+  faSDC_Status(0);
+  faSDC_Status_Integrating(0);
+  faGStatus(0);
+  if(hd_params.enabled)
+    hdStatus(0);
   DALMASTOP;
+
+  if(UITF_RUN_TYPE == UITF_COUNTING)
+    {
+      if(hd_params.enabled)
+	  hdEnable();
+
+      faEnable(fadc_params[UITF_COUNTING].slot, 0, 0);
+    }
+  else if(UITF_RUN_TYPE == UITF_INTEGRATING)
+    {
+      faSDC_Sync_Integrating();
+      taskDelay(1);
+
+      tiIntEnable(1);
+
+      faEnable(fadc_params[UITF_INTEGRATING].slot, 0, 0);
+    }
+
 }
 
 /****************************************
@@ -210,26 +203,18 @@ rocGo()
 void
 rocEnd()
 {
+  faDisable(fadc_params[UITF_RUN_TYPE].slot, 0);
 
-  if(rocTriggerSource == 1)
-    {
-      /* Disable random trigger */
-      tiDisableRandomTrigger();
-    }
-
-  if(rocTriggerSource == 2)
-    {
-      /* Disable Fixed Rate trigger */
-      tiSoftTrig(1,0,100,0);
-    }
-
-  /* FADC Disable */
-  faGDisable(0);
-
+  if(hd_params.enabled)
+    hdDisable();
 
   DALMAGO;
   tiStatus(0);
+  faSDC_Status(0);
+  faSDC_Status_Integrating(0);
   faGStatus(0);
+  if(hd_params.enabled)
+    hdStatus(0);
   DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
@@ -273,74 +258,71 @@ rocTrigger(int arg)
     }
 
   /* Helicity Decoder readout */
-  BANKOPEN(HELICITY_DECODER_BANK, BT_UI4, blockLevel);
-  while((hdBReady()!=1) && (timeout<maxtime))
+  if(hd_params.enabled)
     {
-      timeout++;
-    }
-
-  if(timeout>=maxtime)
-    {
-      printf("%s: ERROR: TIMEOUT waiting for Helicity Decoder Block Ready\n",
-	     __func__);
-    }
-  else
-    {
-      dCnt = hdReadBlock(dma_dabufp, 1024>>2,1);
-      if(dCnt<=0)
+      dCnt = 0;
+      BANKOPEN(HELICITY_DECODER_BANK, BT_UI4, blockLevel);
+      while((hdBReady()!=1) && (timeout<maxtime))
 	{
-	  printf("%s: ERROR or NO data from hdReadBlock(...) = %d\n",
-		 __func__, dCnt);
+	  timeout++;
+	}
+
+      if(timeout>=maxtime)
+	{
+	  printf("%s: ERROR: TIMEOUT waiting for Helicity Decoder Block Ready\n",
+		 __func__);
 	}
       else
 	{
-	  dma_dabufp += dCnt;
-	}
-    }
-
-  BANKCLOSE;
-
-
-
-  /* fADC250 Readout */
-  BANKOPEN(FADC250_DECODER_BANK,BT_UI4,blockLevel);
-
-  /* Mask of initialized modules */
-  uint32_t scanmask = faScanMask();
-  /* Check scanmask for block ready up to 100 times */
-  uint32_t datascan = faGBlockReady(scanmask, maxtime);
-  int32_t stat = (datascan == scanmask);
-
-  // FIXME: This just needs to readout the fadc that is enabled for this config
-
-  if(stat)
-    {
-      int32_t ifa = 0, blockError = 0;
-      for(ifa = 0; ifa < nfadc; ifa++)
-	{
-	  dCnt = faReadBlock(faSlot(ifa), dma_dabufp, MAXFADCWORDS, 1);
-
-	  /* Check for ERROR in block read */
-	  blockError = faGetBlockError(1);
-
-	  if(blockError)
+	  dCnt = hdReadBlock(dma_dabufp, 1024>>2,1);
+	  if(dCnt<=0)
 	    {
-	      printf("ERROR: Slot %d: in transfer (event = %d), dCnt = 0x%x\n",
-		     faSlot(ifa), ev_num, dCnt);
-
-	      if(dCnt > 0)
-		dma_dabufp += dCnt;
+	      printf("%s: ERROR or NO data from hdReadBlock(...) = %d\n",
+		     __func__, dCnt);
 	    }
 	  else
 	    {
 	      dma_dabufp += dCnt;
 	    }
 	}
+
+      BANKCLOSE;
+    }
+
+
+  /* fADC250 Readout */
+  BANKOPEN(FADC250_DECODER_BANK,BT_UI4,blockLevel);
+
+  timeout = 0;
+  while((faBready(fadc_params[UITF_RUN_TYPE].slot) != 1) && (timeout<maxtime))
+    {
+      timeout++;
+    }
+
+  if(timeout>=maxtime)
+    {
+      printf("%s: ERROR: TIMEOUT waiting for FADC (slot = %d) Block Ready\n",
+	     __func__, fadc_params[UITF_RUN_TYPE].slot);
     }
   else
     {
-      printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
-	     ev_num, datascan, scanmask);
+      int32_t blockError = 0;
+
+      dCnt = faReadBlock(fadc_params[UITF_RUN_TYPE].slot, dma_dabufp, MAXFADCWORDS, 1);
+
+      blockError = faGetBlockError(1);
+      if(blockError)
+	{
+	  printf("ERROR: Slot %d: in transfer (event = %d), dCnt = 0x%x\n",
+		 fadc_params[UITF_RUN_TYPE].slot, ev_num, dCnt);
+
+	  if(dCnt > 0)
+	    dma_dabufp += dCnt;
+	}
+      else
+	{
+	  dma_dabufp += dCnt;
+	}
     }
   BANKCLOSE;
 
@@ -360,31 +342,30 @@ rocTrigger(int arg)
 	    }
 	}
 
-      davail = hdBReady();
-      if(davail > 0)
+      if(hd_params.enabled)
 	{
-	  printf("%s: ERROR: Helicity Decoder Data available (%d) after readout in SYNC event \n",
-		 __func__, davail);
-
-	  while(hdBReady(0))
+	  davail = hdBReady();
+	  if(davail > 0)
 	    {
-	      vmeDmaFlush(hdGetA32());
+	      printf("%s: ERROR: Helicity Decoder Data available (%d) after readout in SYNC event \n",
+		     __func__, davail);
+
+	      while(hdBReady(0))
+		{
+		  vmeDmaFlush(hdGetA32());
+		}
 	    }
 	}
 
-      int32_t ifa;
-      for(ifa = 0; ifa < nfadc; ifa++)
+      davail = faBready(fadc_params[UITF_RUN_TYPE].slot);
+      if(davail > 0)
 	{
-	  davail = faBready(faSlot(ifa));
-	  if(davail > 0)
-	    {
-	      printf("%s: ERROR: fADC250 Data available (%d) after readout in SYNC event \n",
-		     __func__, davail);
+	  printf("%s: ERROR: fADC250 Data available (%d) after readout in SYNC event \n",
+		 __func__, davail);
 
-	      while(faBready(faSlot(ifa)))
-		{
-		  vmeDmaFlush(faGetA32(faSlot(ifa)));
-		}
+	  while(faBready(fadc_params[UITF_RUN_TYPE].slot))
+	    {
+	      vmeDmaFlush(faGetA32(fadc_params[UITF_RUN_TYPE].slot));
 	    }
 	}
     }
@@ -404,33 +385,6 @@ rocCleanup()
   faGReset(1);
   dalmaClose();
 }
-
-
-void
-rocSetTriggerSource(int source)
-{
-  if(TIPRIMARYflag == 1)
-    {
-      printf("%s: ERROR: Trigger Source already enabled.  Ignoring change to %d.\n",
-	     __func__, source);
-    }
-  else
-    {
-      rocTriggerSource = source;
-
-      if(rocTriggerSource == 0)
-	{
-	  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
-	}
-      else
-	{
-	  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
-	}
-
-      daLogMsg("INFO","Setting trigger source (%d)", rocTriggerSource);
-    }
-}
-
 
 /*
   Local Variables:

@@ -16,8 +16,15 @@ main(int32_t argc, char *argv[])
 	return -1;
     }
 
-  if(uitf_config_parse() < 0)
-    return -1;
+  vmeOpenDefaultWindows();
+  tiInit(0x180000,0,0);
+  uitf_config_modules_init();
+
+  tiStatus(0);
+  faGStatus(0);
+  faSDC_Status(0);
+  faSDC_Status_Integrating(0);
+  vmeCloseDefaultWindows();
 
   return 0;
 }
