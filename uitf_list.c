@@ -42,11 +42,11 @@
 /* fadc library*/
 #include "fadcLib.h"
 int32_t MAXFADCWORDS = 0;
-const uint32_t FADC250_DECODER_BANK = 0x5;
+const uint32_t FADC250_DECODER_BANK = 0X0250;
 
 /* helicity decoder library */
 #include "hdLib.h"
-const uint32_t HELICITY_DECODER_BANK = 0x11;
+const uint32_t HELICITY_DECODER_BANK = 0xDEC;
 
 // runtype set by user string at Download.  default to counting
 int32_t UITF_RUN_TYPE = UITF_COUNTING;
