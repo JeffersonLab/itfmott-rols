@@ -173,7 +173,7 @@ rocGo()
   if(UITF_RUN_TYPE == UITF_COUNTING)
     {
       /* Enable syncreset source */
-      faGEnableSyncSrc();
+      faEnableSyncSrc(fadc_params[UITF_COUNTING].slot);
 
       /* Sync Reset to init fadc250 timestamp and internal buffers */
       faSDC_Sync();
@@ -187,6 +187,7 @@ rocGo()
     }
   else if(UITF_RUN_TYPE == UITF_INTEGRATING)
     {
+      faEnableSyncSrc(fadc_params[UITF_INTEGRATING].slot);
       faSDC_Sync_Integrating();
       taskDelay(1);
 
